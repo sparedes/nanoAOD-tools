@@ -3,6 +3,7 @@ from PhysicsTools.NanoAODTools.postprocessing.framework.datamodel import Collect
 import ROOT
 import os
 import random
+import inspect
 ROOT.PyConfig.IgnoreCommandLineOptions = True
 
 
@@ -22,9 +23,9 @@ def mk_safe(fct, *args):
 
 class muonScaleResProducer(Module):
     def __init__(self, rc_dir, rc_corrections, dataYear):
-        p_postproc = '%s/src/PhysicsTools/NanoAODTools/python/postprocessing' % os.environ[
-            'CMSSW_BASE']
-        p_roccor = p_postproc + '/data/' + rc_dir
+        p_nanoAOD = str(inspect.getfile(Module)).split('nanoAOD-tools')[0]+'nanoAOD-tools'
+        p_roccor = f'{p_nanoAOD}/python/postprocessing/data/{rc_dir}'
+        print(f'roccor location is at {p_roccor}')
         if "/RoccoR_cc.so" not in ROOT.gSystem.GetLibraries():
             p_helper = '%s/RoccoR.cc' % p_roccor
             print('Loading C++ helper from ' + p_helper)
@@ -42,6 +43,8 @@ class muonScaleResProducer(Module):
         self.out.branch("Muon_corrected_pt", "F", lenVar="nMuon")
         self.out.branch("Muon_correctedUp_pt", "F", lenVar="nMuon")
         self.out.branch("Muon_correctedDown_pt", "F", lenVar="nMuon")
+        self.out.branch("Muon_scaleUp_pt", "F", lenVar="nMuon")
+        self.out.branch("Muon_scaleDown_pt", "F", lenVar="nMuon")
         self.is_mc = bool(inputTree.GetBranch("GenJet_pt"))
 
     def endFile(self, inputFile, outputFile, inputTree, wrappedOutputTree):
@@ -55,6 +58,7 @@ class muonScaleResProducer(Module):
         if self.is_mc:
             pt_corr = []
             pt_err = []
+            pt_scale_err = []
             for mu in muons:
                 genIdx = mu.genPartIdx
                 if genIdx >= 0 and genIdx < len(genparticles):
@@ -65,6 +69,9 @@ class muonScaleResProducer(Module):
                     pt_err.append(mu.pt *
                                   mk_safe(roccor.kSpreadMCerror, mu.charge,
                                           mu.pt, mu.eta, mu.phi, genMu.pt))
+                    pt_scale_err.append(mu.pt *
+                                        mk_safe(roccor.kScaleDTerror, mu.charge, mu.pt, mu.eta, mu.phi))
+
                 else:
                     u1 = random.uniform(0.0, 1.0)
                     pt_corr.append(
@@ -73,6 +80,8 @@ class muonScaleResProducer(Module):
                     pt_err.append(
                         mu.pt * mk_safe(roccor.kSmearMCerror, mu.charge, mu.pt,
                                         mu.eta, mu.phi, mu.nTrackerLayers, u1))
+                    pt_scale_err.append(mu.pt *
+                                        mk_safe(roccor.kScaleDTerror, mu.charge, mu.pt, mu.eta, mu.phi))
 
         else:
             pt_corr = list(
@@ -85,6 +94,12 @@ class muonScaleResProducer(Module):
                 for mu in muons)
 
         self.out.fillBranch("Muon_corrected_pt", pt_corr)
+        pt_scale_corr_up = list(
+            max(pt_corr[imu] + pt_scale_err[imu], 0.0)
+            for imu, mu in enumerate(muons))
+        pt_scale_corr_down = list(
+            max(pt_corr[imu] - pt_scale_err[imu], 0.0)
+            for imu, mu in enumerate(muons))
         pt_corr_up = list(
             max(pt_corr[imu] + pt_err[imu], 0.0)
             for imu, mu in enumerate(muons))
@@ -93,6 +108,8 @@ class muonScaleResProducer(Module):
             for imu, mu in enumerate(muons))
         self.out.fillBranch("Muon_correctedUp_pt", pt_corr_up)
         self.out.fillBranch("Muon_correctedDown_pt", pt_corr_down)
+        self.out.fillBranch("Muon_scaleUp_pt", pt_scale_corr_up)
+        self.out.fillBranch("Muon_scaleDown_pt", pt_scale_corr_down)
         return True
 
 
